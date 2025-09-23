@@ -492,6 +492,8 @@ class Tools:
                 prs_id = list(self.presentations.keys())[0]
             elif prs_id is None:
                 prs_id = next(iter(self.presentations), None)
+            if prs_id and prs_id.endswith('.pptx'):
+                prs_id = prs_id[:-5]
             if prs_id not in self.presentations:
                 return f"Error: Presentation '{prs_id}' not found"
 
@@ -591,81 +593,37 @@ class Tools:
                     }
                 )
 
-            # Create presentation from template if available
-            template_path = os.path.join('.', 'data', 'templates', 'aequitas_master.pptx')
-            if os.path.exists(template_path):
-                prs = Presentation(template_path)
-            else:
-                prs = Presentation()
-            prs_id = self._generate_presentation_id(title)
-            self.presentations[prs_id] = prs
+            # First, create the presentation
+            result = await self.create_presentation(title, __event_emitter__)
+            if "Error" in result:
+                return result
+            
+            # Extract presentation ID from result
+            prs_id = result.split(": ")[1]
 
-            # Title slide
-            slide_layout = prs.slide_layouts[0]
-            slide = prs.slides.add_slide(slide_layout)
-            title_shape = slide.shapes.title if hasattr(slide.shapes, "title") else None
-            if title_shape is not None:
-                title_shape.text = title
+            # Add title slide
+            await self.add_title_slide(prs_id, title, "Generated Presentation", __event_emitter__)
 
-            # Add subtitle if available
-            if hasattr(slide, "placeholders") and len(slide.placeholders) > 1:
-                subtitle_shape = slide.placeholders[1]
-                if subtitle_shape is not None and hasattr(subtitle_shape, "has_text_frame") and subtitle_shape.has_text_frame:
-                    subtitle_shape.text = "Generated Presentation"
-
-            # Content slides
+            # Add content slides
             for i, slide_title in enumerate(slide_titles):
-                slide_layout = prs.slide_layouts[1]  # Title and content layout
-                slide = prs.slides.add_slide(slide_layout)
-
-                # Set title
-                title_shape = slide.shapes.title if hasattr(slide.shapes, "title") else None
-                if title_shape is not None:
-                    title_shape.text = slide_title
-
-                # Add content if available
                 content = content_per_slide[i] if i < len(content_per_slide) else []
-                if content:
-                    # Find content placeholder
-                    content_placeholder = None
-                    for shape in slide.placeholders:
-                        if shape.placeholder_format.type == 2:  # Body placeholder
-                            content_placeholder = shape
-                            break
+                await self.add_content_slide(prs_id, slide_title, "", content, __event_emitter__)
 
-                    # If no content placeholder found, add a textbox
-                    if not content_placeholder:
-                        content_placeholder = slide.shapes.add_textbox(
-                            Inches(1), Inches(2), Inches(8), Inches(4)
-                        )
-
-                    if content_placeholder:
-                        tf = content_placeholder.text_frame
-                        tf.clear()
-
-                        # Add bullet points
-                        if content and len(content) > 0:
-                            p = tf.paragraphs[0]
-                            p.text = content[0]
-                            p.level = 0
-
-                            for bullet_text in content[1:]:
-                                p = tf.add_paragraph()
-                                p.text = bullet_text
-                                p.level = 0
-
+            # Automatically save and return the presentation for download
+            download_result = await self.save_presentation_base64(prs_id, __event_emitter__)
+            
             if __event_emitter__:
                 await __event_emitter__(
                     {
                         "type": "status",
                         "data": {
-                            "description": f"Quick presentation created with {len(slide_titles)} slides",
+                            "description": f"Quick presentation created and ready for download",
                             "done": True,
                         },
                     }
                 )
 
-            return f"Created presentation '{prs_id}' with {len(slide_titles)} content slides"
+            return download_result
 
         except Exception as e:
             if __event_emitter__:
